@@ -123,6 +123,8 @@ void InitStorage(void)
 	InitRecord();
 	InitTransactionList();
 
+	//printf("InitTransactionList finish\n");
+
 	InitServiceMem();
 
 	InitProcHead(1);
@@ -197,7 +199,18 @@ void RunTerminals(int numTerminals)
 	//EndReport(StateInfo, numTerminals);
 
 	//smallbank
-	EndReportBank(StateInfo, numTerminals);
+	//EndReportBank(StateInfo, numTerminals);
+	switch(benchmarkType)
+	{
+	case TPCC:
+		EndReport(StateInfo, numTerminals);
+		break;
+	case SMALLBANK:
+		EndReportBank(StateInfo, numTerminals);
+		break;
+	default:
+		printf("benchmark not specified\n");
+	}
 }
 
 void runTerminal(int terminalWarehouseID, int terminalDistrictID, pthread_t *tid, pthread_barrier_t *barrier, TransState* StateInfo)

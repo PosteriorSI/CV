@@ -20,6 +20,11 @@
 //limitiations of redo times.
 #define REDOLIMIT redo_limit
 
+//smallbank extension
+#define EXTENSIONLIMIT extension_limit
+
+BENCHMARK benchmarkType;
+
 int GetMaxOid(int table_id, int w_id, int d_id, int c_id);
 
 int GetMinOid(int table_id, int w_id, int d_id);
@@ -43,7 +48,23 @@ int testTransaction(int w_id, int d_id);
 //smallbank
 int LoadBankData(void);
 
-void executeTransactionBank(TransactionsType type, int *pabort, int *pglobal);
+//void executeTransactionBank(TransactionsType type, int *pabort, int *pglobal);
+void executeTransactionBank(TransactionsType type, int *pabort, int *pglobal, TupleId* acctArr, int* nodeArr);
+
+//smallbank extension
+int SendPaymentTransactionExtension(TupleId sendAcct, TupleId destAcct, int amount, int* node_id, int node_num, TupleId* acctArr, int* nodeArr);
+
+int TransactSavingsTransactionExtension(TupleId acctId, int amount, int* node_id, int node_num, TupleId* acctArr, int* nodeArr);
+
+int WriteCheckTransactionExtension(TupleId acctId, int amount, int* node_id, int node_num, TupleId* acctArr, int* nodeArr);
+
+int AmalgamateTransactionExtension(TupleId acctId0, TupleId acctId1, int* node_id, int node_num, TupleId* acctArr, int* nodeArr);
+
+int BalanceTransactionExtension(TupleId acctId, int* node_id, int node_num, TupleId* acctArr, int* nodeArr);
+
+int DepositCheckingTransactionExtension(TupleId acctId, int amount, int* node_id, int node_num, TupleId* acctArr, int* nodeArr);
+
+void randomReadGen(TupleId* acctArr, int* nodeArr, int* node_id, int node_num);
 
 /***************************Load Data******************************/
 uint64_t LoadData(void)
@@ -1784,6 +1805,22 @@ void executeTransactionsBank(int numTransactions, TransState* StateInfo)
 	int is_global;
 	int abort;
 
+	//random read control
+	TupleId* acctArr=NULL;
+	int* nodeArr=NULL;
+
+	if(random_read_limit > 0)
+	{
+		acctArr=(TupleId*)malloc(sizeof(TupleId)*random_read_limit*2);
+		nodeArr=(int*)malloc(sizeof(int)*random_read_limit*2);
+
+		if(acctArr==NULL || nodeArr==NULL)
+		{
+			printf("random read malloc error\n");
+			exit(-1);
+		}
+	}
+
 	StateInfo->trans_commit=0;
 	StateInfo->trans_abort=0;
 	StateInfo->Delivery=0;
@@ -1822,7 +1859,7 @@ void executeTransactionsBank(int numTransactions, TransState* StateInfo)
 
 		if(transactionWeight <= FREQUENCY_AMALGAMATE)
 		{
-			executeTransactionBank(AMALGAMATE, &abort, &is_global);
+			executeTransactionBank(AMALGAMATE, &abort, &is_global, acctArr, nodeArr);
 			StateInfo->Amalgamate++;
 
 			if(abort != REDOLIMIT)
@@ -1830,7 +1867,7 @@ void executeTransactionsBank(int numTransactions, TransState* StateInfo)
 		}
 		else if(transactionWeight <= FREQUENCY_AMALGAMATE + FREQUENCY_BALANCE)
 		{
-			executeTransactionBank(BALANCE, &abort, &is_global);
+			executeTransactionBank(BALANCE, &abort, &is_global, acctArr, nodeArr);
 			StateInfo->Balance++;
 
 			if(abort != REDOLIMIT)
@@ -1838,7 +1875,7 @@ void executeTransactionsBank(int numTransactions, TransState* StateInfo)
 		}
 		else if(transactionWeight <= FREQUENCY_AMALGAMATE + FREQUENCY_BALANCE + FREQUENCY_DEPOSIT_CHECKING)
 		{
-			executeTransactionBank(DEPOSITCHECKING, &abort, &is_global);
+			executeTransactionBank(DEPOSITCHECKING, &abort, &is_global, acctArr, nodeArr);
 			StateInfo->DepositChecking++;
 
 			if(abort != REDOLIMIT)
@@ -1846,7 +1883,7 @@ void executeTransactionsBank(int numTransactions, TransState* StateInfo)
 		}
 		else if(transactionWeight <= FREQUENCY_AMALGAMATE + FREQUENCY_BALANCE + FREQUENCY_DEPOSIT_CHECKING + FREQUENCY_SEND_PAYMENT)
 		{
-			executeTransactionBank(SENDPAYMENT, &abort, &is_global);
+			executeTransactionBank(SENDPAYMENT, &abort, &is_global, acctArr, nodeArr);
 			StateInfo->SendPayment++;
 
 			if(abort != REDOLIMIT)
@@ -1854,7 +1891,7 @@ void executeTransactionsBank(int numTransactions, TransState* StateInfo)
 		}
 		else if(transactionWeight <= FREQUENCY_AMALGAMATE + FREQUENCY_BALANCE + FREQUENCY_DEPOSIT_CHECKING + FREQUENCY_SEND_PAYMENT + FREQUENCY_TRANSACT_SAVINGS)
 		{
-			executeTransactionBank(TRANSACTSAVINGS, &abort, &is_global);
+			executeTransactionBank(TRANSACTSAVINGS, &abort, &is_global, acctArr, nodeArr);
 			StateInfo->TransactSavings++;
 
 			if(abort != REDOLIMIT)
@@ -1863,7 +1900,7 @@ void executeTransactionsBank(int numTransactions, TransState* StateInfo)
 		}
 		else
 		{
-			executeTransactionBank(WRITECHECK, &abort, &is_global);
+			executeTransactionBank(WRITECHECK, &abort, &is_global, acctArr, nodeArr);
 			StateInfo->WriteCheck++;
 
 			if(abort != REDOLIMIT)
@@ -1892,11 +1929,10 @@ void executeTransactionsBank(int numTransactions, TransState* StateInfo)
         }
 	}
 }
-
 /*
  * @return:'0' for commit, '-1' for abort.
  */
-void executeTransactionBank(TransactionsType type, int *pabort, int *pglobal)
+void executeTransactionBank(TransactionsType type, int *pabort, int *pglobal, TupleId* acctArr, int* nodeArr)
 {
     int redo;
 	bool distributed=true;
@@ -1942,22 +1978,38 @@ void executeTransactionBank(TransactionsType type, int *pabort, int *pglobal)
 
 	int orderCarrierID;
 
+	//hotspot control
+	bool isHotSpot=false;
+	int accountsRange;
+	isHotSpot=(RandomNumber(1,100)<=HOTSPOT_PERCENTAGE)?true:false;
+	accountsRange=(isHotSpot==true)?(HOTSPOT_FIXED_SIZE):(configNumAccounts-HOTSPOT_FIXED_SIZE);
+
 	switch(type)
 	{
 	case AMALGAMATE:
-		acctId0=RandomNumber(1, configNumAccounts);
-
+		//acctId0=RandomNumber(1, configNumAccounts);
+		acctId0=RandomNumber(1, accountsRange);
 		while(1)
 		{
-			acctId1=RandomNumber(1, configNumAccounts);
+			//acctId1=RandomNumber(1, configNumAccounts);
+			acctId1=RandomNumber(1, accountsRange);
 
 			if(acctId1 != acctId0)
 				break;
 		}
 
+		if(isHotSpot==false)
+		{
+			acctId0+=HOTSPOT_FIXED_SIZE;
+			acctId1+=HOTSPOT_FIXED_SIZE;
+		}
+
+		//random read
+		randomReadGen(acctArr, nodeArr, node_id, node_num);
+
 		for (redo = 0; redo < REDOLIMIT; redo++)
         {
-		     result=AmalgamateTransaction(acctId0, acctId1, node_id, node_num);
+		     result=AmalgamateTransaction(acctId0, acctId1, node_id, node_num, acctArr, nodeArr);
 			 if(result==0)
 				break;
 			 else
@@ -1967,11 +2019,16 @@ void executeTransactionBank(TransactionsType type, int *pabort, int *pglobal)
         }		
 		break;
 	case BALANCE:
-		acctId0=RandomNumber(1, configNumAccounts);
+		//acctId0=RandomNumber(1, configNumAccounts);
+		acctId0=RandomNumber(1, accountsRange);
+		if(isHotSpot==false)
+			acctId0+=HOTSPOT_FIXED_SIZE;
 
+		//random read
+		randomReadGen(acctArr, nodeArr, node_id, node_num);
 		for (redo = 0; redo < REDOLIMIT; redo++)
         {
-		     result=BalanceTransaction(acctId0, node_id, node_num);
+		     result=BalanceTransaction(acctId0, node_id, node_num, acctArr, nodeArr);
 			 if(result==0)
 				break;
 			 else
@@ -1981,12 +2038,18 @@ void executeTransactionBank(TransactionsType type, int *pabort, int *pglobal)
         }		
 		break;
 	case DEPOSITCHECKING:
-		acctId0=RandomNumber(1, configNumAccounts);
+		//acctId0=RandomNumber(1, configNumAccounts);
+		acctId0=RandomNumber(1, accountsRange);
+		if(isHotSpot==false)
+			acctId0+=HOTSPOT_FIXED_SIZE;
 		amount=RandomNumber(1, 10000);
+
+		//random read
+		randomReadGen(acctArr, nodeArr, node_id, node_num);
 
 		for (redo = 0; redo < REDOLIMIT; redo++)
         {
-		     result=DepositCheckingTransaction(acctId0, amount, node_id, node_num);
+		     result=DepositCheckingTransaction(acctId0, amount, node_id, node_num, acctArr, nodeArr);
 			 if(result==0)
 				break;
 			 else
@@ -1996,21 +2059,32 @@ void executeTransactionBank(TransactionsType type, int *pabort, int *pglobal)
         }			
 		break;
 	case SENDPAYMENT:
-		acctId0=RandomNumber(1, configNumAccounts);
+		//acctId0=RandomNumber(1, configNumAccounts);
+		acctId0=RandomNumber(1, accountsRange);
 
 		while(1)
 		{
-			acctId1=RandomNumber(1, configNumAccounts);
+			//acctId1=RandomNumber(1, configNumAccounts);
+			acctId1=RandomNumber(1, accountsRange);
 
 			if(acctId1 != acctId0)
 				break;
 		}
 
+		if(isHotSpot==false)
+		{
+			acctId0+=HOTSPOT_FIXED_SIZE;
+			acctId1+=HOTSPOT_FIXED_SIZE;
+		}
+
 		amount=RandomNumber(1, 10000);
+
+		//random read
+		randomReadGen(acctArr, nodeArr, node_id, node_num);
 
 		for (redo = 0; redo < REDOLIMIT; redo++)
         {
-		     result=SendPaymentTransaction(acctId0, acctId1, amount, node_id, node_num);
+		     result=SendPaymentTransaction(acctId0, acctId1, amount, node_id, node_num, acctArr, nodeArr);
 			 if(result==0)
 				break;
 			 else
@@ -2020,12 +2094,18 @@ void executeTransactionBank(TransactionsType type, int *pabort, int *pglobal)
         }
 		break;
 	case TRANSACTSAVINGS:
-		acctId0=RandomNumber(1, configNumAccounts);
+		//acctId0=RandomNumber(1, configNumAccounts);
+		acctId0=RandomNumber(1, accountsRange);
+		if(isHotSpot==false)
+			acctId0+=HOTSPOT_FIXED_SIZE;
 		amount=RandomNumber(1, 10000);
 		
+		//random read
+		randomReadGen(acctArr, nodeArr, node_id, node_num);
+
 		for (redo = 0; redo < REDOLIMIT; redo++)
         {
-		     result=TransactSavingsTransaction(acctId0, amount, node_id, node_num);
+		     result=TransactSavingsTransaction(acctId0, amount, node_id, node_num, acctArr, nodeArr);
 			 if(result==0)
 				break;
 			 else
@@ -2036,12 +2116,18 @@ void executeTransactionBank(TransactionsType type, int *pabort, int *pglobal)
 
 		break;
 	case WRITECHECK:
-		acctId0=RandomNumber(1, configNumAccounts);
+		//acctId0=RandomNumber(1, configNumAccounts);
+		acctId0=RandomNumber(1, accountsRange);
+		if(isHotSpot==false)
+			acctId0+=HOTSPOT_FIXED_SIZE;
 		amount=RandomNumber(1, 10000);
+
+		//random read
+		randomReadGen(acctArr, nodeArr, node_id, node_num);
 
 		for (redo = 0; redo < REDOLIMIT; redo++)
         {
-		     result=WriteCheckTransaction(acctId0, amount, node_id, node_num);
+		     result=WriteCheckTransaction(acctId0, amount, node_id, node_num, acctArr, nodeArr);
 			 if(result==0)
 				break;
 			 else
@@ -2063,8 +2149,7 @@ void executeTransactionBank(TransactionsType type, int *pabort, int *pglobal)
 	*pabort = abort;
 }
 
-
-int SendPaymentTransaction(TupleId sendAcct, TupleId destAcct, int amount, int* node_id, int node_num)
+int SendPaymentTransaction(TupleId sendAcct, TupleId destAcct, int amount, int* node_id, int node_num, TupleId* acctArr, int* nodeArr)
 {
 	StartTransaction();
 
@@ -2076,6 +2161,8 @@ int SendPaymentTransaction(TupleId sendAcct, TupleId destAcct, int amount, int* 
 	int nodeid1, nodeid2;
 	int result;
 	int transaction_result;
+
+
 
 	switch(node_num)
 	{
@@ -2197,6 +2284,13 @@ int SendPaymentTransaction(TupleId sendAcct, TupleId destAcct, int amount, int* 
     	return -1;
     }
 
+	//read extension
+	if(SendPaymentTransactionExtension(sendAcct, destAcct, amount, node_id, node_num, acctArr, nodeArr)<0)
+	{
+    	AbortTransactionbak();
+    	return -1;
+	}
+
 	success=CommitTransactionbak();
 
 	transaction_result=(success == true) ? 0 : -1;
@@ -2204,7 +2298,7 @@ int SendPaymentTransaction(TupleId sendAcct, TupleId destAcct, int amount, int* 
 	return transaction_result;
 }
 
-int TransactSavingsTransaction(TupleId acctId, int amount, int* node_id, int node_num)
+int TransactSavingsTransaction(TupleId acctId, int amount, int* node_id, int node_num, TupleId* acctArr, int* nodeArr)
 {
 	StartTransaction();
 
@@ -2266,6 +2360,23 @@ int TransactSavingsTransaction(TupleId acctId, int amount, int* node_id, int nod
 	//UpdateSavingsBalance
 	savingBal=savingBal-amount;
 	result=Data_Update(Savings_ID, acctId, savingBal, nodeid1);
+	if(result == 0)
+	{
+		printf("UpdateSavingsBalance() update failed, acctId=%ld\n",acctId);
+		exit(-1);
+	}
+    else if(result < 0)
+    {
+    	AbortTransactionbak();
+    	return -1;
+    }
+
+	//read extension
+	if(TransactSavingsTransactionExtension(acctId, amount, node_id, node_num, acctArr, nodeArr)<0)
+	{
+    	AbortTransactionbak();
+    	return -1;
+	}
 
 	success=CommitTransactionbak();
 
@@ -2274,7 +2385,7 @@ int TransactSavingsTransaction(TupleId acctId, int amount, int* node_id, int nod
 	return transaction_result;
 }
 
-int WriteCheckTransaction(TupleId acctId, int amount, int* node_id, int node_num)
+int WriteCheckTransaction(TupleId acctId, int amount, int* node_id, int node_num, TupleId* acctArr, int* nodeArr)
 {
 	StartTransaction();
 
@@ -2372,6 +2483,13 @@ int WriteCheckTransaction(TupleId acctId, int amount, int* node_id, int node_num
 	    }
 	}
 
+	//read extension
+	if(WriteCheckTransactionExtension(acctId, amount, node_id, node_num, acctArr, nodeArr)<0)
+	{
+    	AbortTransactionbak();
+    	return -1;
+	}
+
 	success=CommitTransactionbak();
 
 	transaction_result=(success == true) ? 0 : -1;
@@ -2379,7 +2497,7 @@ int WriteCheckTransaction(TupleId acctId, int amount, int* node_id, int node_num
 	return transaction_result;
 }
 
-int AmalgamateTransaction(TupleId acctId0, TupleId acctId1, int* node_id, int node_num)
+int AmalgamateTransaction(TupleId acctId0, TupleId acctId1, int* node_id, int node_num, TupleId* acctArr, int* nodeArr)
 {
 	StartTransaction();
 
@@ -2509,6 +2627,13 @@ int AmalgamateTransaction(TupleId acctId0, TupleId acctId1, int* node_id, int no
 		return -1;
 	}
 
+	//read extension
+	if(AmalgamateTransactionExtension(acctId0, acctId1, node_id, node_num, acctArr, nodeArr)<0)
+	{
+		AbortTransactionbak();
+		return -1;
+	}
+
 	success=CommitTransactionbak();
 
 	transaction_result=(success == true) ? 0 : -1;
@@ -2517,7 +2642,7 @@ int AmalgamateTransaction(TupleId acctId0, TupleId acctId1, int* node_id, int no
 
 }
 
-int BalanceTransaction(TupleId acctId, int* node_id, int node_num)
+int BalanceTransaction(TupleId acctId, int* node_id, int node_num, TupleId* acctArr, int* nodeArr)
 {
 	StartTransaction();
 
@@ -2581,6 +2706,13 @@ int BalanceTransaction(TupleId acctId, int* node_id, int node_num)
 		return -1;
 	}	
 
+	//read extension
+	if(BalanceTransactionExtension(acctId, node_id, node_num, acctArr, nodeArr)<0)
+	{
+		AbortTransactionbak();
+		return -1;
+	}
+
 	totalBal=savingBal+checkingBal;
 	
 	success=CommitTransactionbak();
@@ -2590,7 +2722,7 @@ int BalanceTransaction(TupleId acctId, int* node_id, int node_num)
 	return transaction_result;
 }
 
-int DepositCheckingTransaction(TupleId acctId, int amount, int* node_id, int node_num)
+int DepositCheckingTransaction(TupleId acctId, int amount, int* node_id, int node_num, TupleId* acctArr, int* nodeArr)
 {
 	StartTransaction();
 
@@ -2653,6 +2785,13 @@ int DepositCheckingTransaction(TupleId acctId, int amount, int* node_id, int nod
 		return -1;
 	}
 
+	//read extension
+	if(DepositCheckingTransactionExtension(acctId, amount, node_id, node_num, acctArr, nodeArr)<0)
+	{
+		AbortTransactionbak();
+		return -1;
+	}
+
 	success=CommitTransactionbak();
 
 	transaction_result=(success == true) ? 0 : -1;
@@ -2661,4 +2800,700 @@ int DepositCheckingTransaction(TupleId acctId, int amount, int* node_id, int nod
 
 }
 
+//smallbank extension
+int SendPaymentTransactionExtension(TupleId sendAcct, TupleId destAcct, int amount, int* node_id, int node_num, TupleId* acctArr, int* nodeArr)
+{
+	int flag;
+	int i;
+	int repeat=0;
+	TupleId acctId0, acctId1, acctName, sendBal, destBal;
+
+	int nodeid1, nodeid2;
+	int result;
+	int transaction_result;
+
+	switch(node_num)
+	{
+	case 1:
+		nodeid1=node_id[0];
+		nodeid2=node_id[0];
+		break;
+	case 2:
+		nodeid1=node_id[0];
+		nodeid2=node_id[1];
+		break;
+	case 3:
+		nodeid1=node_id[0];
+		nodeid2=node_id[2];
+		break;
+	default:
+		printf("node_num error %d\n", node_num);
+		break;
+	}
+
+	while(repeat++<EXTENSIONLIMIT)
+	{
+		//get account information.
+
+		//GetAccount
+		acctId0=sendAcct;
+
+		acctName=Data_Read(Accounts_ID, acctId0, nodeid1, &flag);
+		if(flag==0)
+		{
+			printf("sendGetAccount() not found, acctId=%ld\n",acctId0);
+			exit(-1);
+		}
+		else if(flag==-3)
+		{
+			//AbortTransactionbak();
+			return -1;
+		}
+
+		//GetAccount
+		acctId1=destAcct;
+		acctName=Data_Read(Accounts_ID, acctId1, nodeid2, &flag);
+		if(flag==0)
+		{
+			printf("destGetAccount() not found, acctId=%ld\n",acctId1);
+			exit(-1);
+		}
+		else if(flag==-3)
+		{
+			//AbortTransactionbak();
+			return -1;
+		}
+
+		//get the sender's account balance.
+
+		//GetCheckingBalance
+		acctId0=sendAcct;
+		sendBal=Data_Read(Checking_ID, acctId0, nodeid1, &flag);
+		if(flag==0)
+		{
+			printf("sendGetCheckingBalance() not found, acctId=%ld\n",acctId0);
+			exit(-1);
+		}
+		else if(flag==-3)
+		{
+			//AbortTransactionbak();
+			return -1;
+		}
+	}
+
+	for(i=0;i<random_read_limit;i+=2)
+	{
+		acctId0=acctArr[i];
+		acctId1=acctArr[i+1];
+		nodeid1=nodeArr[i];
+		nodeid2=nodeArr[i+1];
+		//get account information.
+
+		//GetAccount
+		//acctId0=sendAcct;
+
+		acctName=Data_Read(Accounts_ID, acctId0, nodeid1, &flag);
+		if(flag==0)
+		{
+			printf("sendGetAccount() not found, acctId=%ld\n",acctId0);
+			exit(-1);
+		}
+		else if(flag==-3)
+		{
+			//AbortTransactionbak();
+			return -1;
+		}
+
+		//GetAccount
+		//acctId1=destAcct;
+		acctName=Data_Read(Accounts_ID, acctId1, nodeid2, &flag);
+		if(flag==0)
+		{
+			printf("destGetAccount() not found, acctId=%ld\n",acctId1);
+			exit(-1);
+		}
+		else if(flag==-3)
+		{
+			//AbortTransactionbak();
+			return -1;
+		}
+
+		//get the sender's account balance.
+
+		//GetCheckingBalance
+		//acctId0=sendAcct;
+		sendBal=Data_Read(Checking_ID, acctId0, nodeid1, &flag);
+		if(flag==0)
+		{
+			printf("sendGetCheckingBalance() not found, acctId=%ld\n",acctId0);
+			exit(-1);
+		}
+		else if(flag==-3)
+		{
+			//AbortTransactionbak();
+			return -1;
+		}
+	}
+
+	return 0;
+}
+
+int TransactSavingsTransactionExtension(TupleId acctId, int amount, int* node_id, int node_num, TupleId* acctArr, int* nodeArr)
+{
+	int flag;
+	int repeat=0;
+	int i;
+	int nodeid1;
+	TupleId acctName, balance, checkingBal, savingBal;
+
+	switch(node_num)
+	{
+	case 1:
+		nodeid1=node_id[0];
+		break;
+	case 2:
+		nodeid1=node_id[1];
+		break;
+	case 3:
+		nodeid1=node_id[2];
+		break;
+	default:
+		printf("node_num error %d\n", node_num);
+	}
+
+	while(repeat++<EXTENSIONLIMIT)
+	{
+		//GetAccount
+		acctName=Data_Read(Accounts_ID, acctId, nodeid1, &flag);
+		if(flag==0)
+		{
+			printf("GetAccount() not found, acctId=%ld\n",acctId);
+			exit(-1);
+		}
+		else if(flag==-3)
+		{
+			//AbortTransactionbak();
+			return -1;
+		}
+
+		//GetSavingsBalance
+		savingBal=Data_Read(Savings_ID, acctId, nodeid1, &flag);
+		if(flag==0)
+		{
+			printf("GetSavingsBalance() not found, acctId=%ld\n",acctId);
+			exit(-1);
+		}
+		else if(flag==-3)
+		{
+			//AbortTransactionbak();
+			return -1;
+		}
+	}
+
+	for(i=0;i<random_read_limit;i++)
+	{
+		acctId=acctArr[i];
+		nodeid1=nodeArr[i];
+		//GetAccount
+		acctName=Data_Read(Accounts_ID, acctId, nodeid1, &flag);
+		if(flag==0)
+		{
+			printf("GetAccount() not found, acctId=%ld\n",acctId);
+			exit(-1);
+		}
+		else if(flag==-3)
+		{
+			//AbortTransactionbak();
+			return -1;
+		}
+
+		//GetSavingsBalance
+		savingBal=Data_Read(Savings_ID, acctId, nodeid1, &flag);
+		if(flag==0)
+		{
+			printf("GetSavingsBalance() not found, acctId=%ld\n",acctId);
+			exit(-1);
+		}
+		else if(flag==-3)
+		{
+			//AbortTransactionbak();
+			return -1;
+		}
+	}
+
+	return 0;
+}
+
+int WriteCheckTransactionExtension(TupleId acctId, int amount, int* node_id, int node_num, TupleId* acctArr, int* nodeArr)
+{
+	int repeat=0;
+	int nodeid1;
+	int i;
+	int flag;
+	TupleId acctName, balance, savingBal, checkingBal, totalBal;
+
+	switch(node_num)
+	{
+	case 1:
+		nodeid1=node_id[0];
+		break;
+	case 2:
+		nodeid1=node_id[1];
+		break;
+	case 3:
+		nodeid1=node_id[2];
+		break;
+	default:
+		printf("node_num error %d\n", node_num);
+	}
+
+	while(repeat++<EXTENSIONLIMIT)
+	{
+		//GetAccount
+		acctName=Data_Read(Accounts_ID, acctId, nodeid1, &flag);
+		if(flag==0)
+		{
+			printf("GetAccount() not found, acctId=%ld\n",acctId);
+			exit(-1);
+		}
+		else if(flag==-3)
+		{
+			//AbortTransactionbak();
+			return -1;
+		}
+
+		//GetSavingsBalance
+		savingBal=Data_Read(Savings_ID, acctId, nodeid1, &flag);
+		if(flag==0)
+		{
+			printf("GetSavingsBalance() not found, acctId=%ld\n",acctId);
+			exit(-1);
+		}
+		else if(flag==-3)
+		{
+			//AbortTransactionbak();
+			return -1;
+		}
+
+		//GetCheckingBalance
+		checkingBal=Data_Read(Checking_ID, acctId, nodeid1, &flag);
+		if(flag==0)
+		{
+			printf("GetCheckingBalance() not found, acctId=%ld\n",acctId);
+			exit(-1);
+		}
+		else if(flag==-3)
+		{
+			//AbortTransactionbak();
+			return -1;
+		}
+	}
+
+	for(i=0;i<random_read_limit;i++)
+	{
+		acctId=acctArr[i];
+		nodeid1=nodeArr[i];
+		//GetAccount
+		acctName=Data_Read(Accounts_ID, acctId, nodeid1, &flag);
+		if(flag==0)
+		{
+			printf("GetAccount() not found, acctId=%ld\n",acctId);
+			exit(-1);
+		}
+		else if(flag==-3)
+		{
+			//AbortTransactionbak();
+			return -1;
+		}
+
+		//GetSavingsBalance
+		savingBal=Data_Read(Savings_ID, acctId, nodeid1, &flag);
+		if(flag==0)
+		{
+			printf("GetSavingsBalance() not found, acctId=%ld\n",acctId);
+			exit(-1);
+		}
+		else if(flag==-3)
+		{
+			//AbortTransactionbak();
+			return -1;
+		}
+
+		//GetCheckingBalance
+		checkingBal=Data_Read(Checking_ID, acctId, nodeid1, &flag);
+		if(flag==0)
+		{
+			printf("GetCheckingBalance() not found, acctId=%ld\n",acctId);
+			exit(-1);
+		}
+		else if(flag==-3)
+		{
+			//AbortTransactionbak();
+			return -1;
+		}
+	}
+
+	return 0;
+}
+
+int AmalgamateTransactionExtension(TupleId acctId0, TupleId acctId1, int* node_id, int node_num, TupleId* acctArr, int* nodeArr)
+{
+	int repeat=0;
+	int flag;
+	int i;
+	TupleId acctName, balance, checkingBal0, savingBal0, checkingBal1, savingBal1, acctId, totalBal;
+	int nodeid1, nodeid2;
+
+	switch(node_num)
+	{
+	case 1:
+		nodeid1=node_id[0];
+		nodeid2=node_id[0];
+		break;
+	case 2:
+		nodeid1=node_id[0];
+		nodeid2=node_id[1];
+		break;
+	case 3:
+		nodeid1=node_id[0];
+		nodeid2=node_id[2];
+		break;
+	default:
+		printf("node_num error %d\n", node_num);
+		break;
+	}
+
+	while(repeat++<EXTENSIONLIMIT)
+	{
+		//get account information.
+
+		//GetAccount
+		acctName=Data_Read(Accounts_ID, acctId0, nodeid1, &flag);
+		if(flag==0)
+		{
+			printf("GetAccount() not found, acctId0=%ld\n",acctId0);
+			exit(-1);
+		}
+		else if(flag==-3)
+		{
+			//AbortTransactionbak();
+			return -1;
+		}
+
+		//GetAccount
+		acctName=Data_Read(Accounts_ID, acctId1, nodeid2, &flag);
+		if(flag==0)
+		{
+			printf("GetAccount() not found, acctId1=%ld\n",acctId1);
+			exit(-1);
+		}
+		else if(flag==-3)
+		{
+			//AbortTransactionbak();
+			return -1;
+		}
+
+		// Get Balance Information
+
+		//GetSavingsBalance
+		savingBal0=Data_Read(Savings_ID, acctId0, nodeid1, &flag);
+		if(flag==0)
+		{
+			printf("GetSavingsBalance() not found, acctId0=%ld\n",acctId1);
+			exit(-1);
+		}
+		else if(flag==-3)
+		{
+			//AbortTransactionbak();
+			return -1;
+		}
+
+		//GetCheckingBalance
+		checkingBal1=Data_Read(Checking_ID, acctId1, nodeid2, &flag);
+		if(flag==0)
+		{
+			printf("GetCheckingBalance() not found, acctId1=%ld\n",acctId1);
+			exit(-1);
+		}
+		else if(flag==-3)
+		{
+			//AbortTransactionbak();
+			return -1;
+		}
+	}
+
+	for(i=0;i<random_read_limit;i+=2)
+	{
+		acctId0=acctArr[i];
+		acctId1=acctArr[i+1];
+		nodeid1=nodeArr[i];
+		nodeid2=nodeArr[i+1];
+		//GetAccount
+		acctName=Data_Read(Accounts_ID, acctId0, nodeid1, &flag);
+		if(flag==0)
+		{
+			printf("GetAccount() not found, acctId0=%ld\n",acctId0);
+			exit(-1);
+		}
+		else if(flag==-3)
+		{
+			//AbortTransactionbak();
+			return -1;
+		}
+
+		//GetAccount
+		acctName=Data_Read(Accounts_ID, acctId1, nodeid2, &flag);
+		if(flag==0)
+		{
+			printf("GetAccount() not found, acctId1=%ld\n",acctId1);
+			exit(-1);
+		}
+		else if(flag==-3)
+		{
+			//AbortTransactionbak();
+			return -1;
+		}
+
+		// Get Balance Information
+
+		//GetSavingsBalance
+		savingBal0=Data_Read(Savings_ID, acctId0, nodeid1, &flag);
+		if(flag==0)
+		{
+			printf("GetSavingsBalance() not found, acctId0=%ld\n",acctId1);
+			exit(-1);
+		}
+		else if(flag==-3)
+		{
+			//AbortTransactionbak();
+			return -1;
+		}
+
+		//GetCheckingBalance
+		checkingBal1=Data_Read(Checking_ID, acctId1, nodeid2, &flag);
+		if(flag==0)
+		{
+			printf("GetCheckingBalance() not found, acctId1=%ld\n",acctId1);
+			exit(-1);
+		}
+		else if(flag==-3)
+		{
+			//AbortTransactionbak();
+			return -1;
+		}
+	}
+
+	return 0;
+}
+
+int BalanceTransactionExtension(TupleId acctId, int* node_id, int node_num, TupleId* acctArr, int* nodeArr)
+{
+	int repeat=0;
+	int flag;
+	int i;
+	TupleId acctName, checkingBal, savingBal, totalBal;
+	int nodeid1;
+
+	switch(node_num)
+	{
+	case 1:
+		nodeid1=node_id[0];
+		break;
+	case 2:
+		nodeid1=node_id[1];
+		break;
+	case 3:
+		nodeid1=node_id[2];
+		break;
+	default:
+		printf("node_num error %d\n", node_num);
+	}
+
+	while(repeat++<EXTENSIONLIMIT)
+	{
+		//GetAccount
+		acctName=Data_Read(Accounts_ID, acctId, nodeid1, &flag);
+		if(flag==0)
+		{
+			printf("GetAccount() not found, acctId=%ld\n",acctId);
+			exit(-1);
+		}
+		else if(flag==-3)
+		{
+			//AbortTransactionbak();
+			return -1;
+		}
+
+		//GetSavingsBalance
+		savingBal=Data_Read(Savings_ID, acctId, nodeid1, &flag);
+		if(flag==0)
+		{
+			printf("GetSavingsBalance() not found, acctId=%ld\n",acctId);
+			exit(-1);
+		}
+		else if(flag==-3)
+		{
+			//AbortTransactionbak();
+			return -1;
+		}
+
+
+		//GetCheckingBalance
+		checkingBal=Data_Read(Checking_ID, acctId, nodeid1, &flag);
+		if(flag==0)
+		{
+			printf("GetCheckingBalance() not found, acctId=%ld\n",acctId);
+			exit(-1);
+		}
+		else if(flag==-3)
+		{
+			//AbortTransactionbak();
+			return -1;
+		}
+	}
+
+	//random read control
+	for(i=0;i<random_read_limit;i++)
+	{
+		acctId=acctArr[i];
+		nodeid1=nodeArr[i];
+		//GetAccount
+		acctName=Data_Read(Accounts_ID, acctId, nodeid1, &flag);
+		if(flag==0)
+		{
+			printf("GetAccount() not found, acctId=%ld\n",acctId);
+			exit(-1);
+		}
+		else if(flag==-3)
+		{
+			//AbortTransactionbak();
+			return -1;
+		}
+
+		//GetSavingsBalance
+		savingBal=Data_Read(Savings_ID, acctId, nodeid1, &flag);
+		if(flag==0)
+		{
+			printf("GetSavingsBalance() not found, acctId=%ld\n",acctId);
+			exit(-1);
+		}
+		else if(flag==-3)
+		{
+			//AbortTransactionbak();
+			return -1;
+		}
+
+
+		//GetCheckingBalance
+		checkingBal=Data_Read(Checking_ID, acctId, nodeid1, &flag);
+		if(flag==0)
+		{
+			printf("GetCheckingBalance() not found, acctId=%ld\n",acctId);
+			exit(-1);
+		}
+		else if(flag==-3)
+		{
+			//AbortTransactionbak();
+			return -1;
+		}
+	}
+
+	return 0;
+}
+
+int DepositCheckingTransactionExtension(TupleId acctId, int amount, int* node_id, int node_num, TupleId* acctArr, int* nodeArr)
+{
+	int repeat=0;
+	int i;
+	int flag;
+	TupleId acctName, savingBal, checkingBal;
+	int nodeid1;
+
+	switch(node_num)
+	{
+	case 1:
+		nodeid1=node_id[0];
+		break;
+	case 2:
+		nodeid1=node_id[1];
+		break;
+	case 3:
+		nodeid1=node_id[2];
+		break;
+	default:
+		printf("node_num error %d\n", node_num);
+	}
+
+	while(repeat++<EXTENSIONLIMIT)
+	{
+		//GetAccount
+		acctName=Data_Read(Accounts_ID, acctId, nodeid1, &flag);
+		if(flag==0)
+		{
+			printf("GetAccount() not found, acctId=%ld\n",acctId);
+			exit(-1);
+		}
+		else if(flag==-3)
+		{
+			//AbortTransactionbak();
+			return -1;
+		}
+
+		//UpdateCheckingBalance
+		checkingBal=Data_Read(Checking_ID, acctId, nodeid1,  &flag);
+		if(flag==0)
+		{
+			printf("UpdateCheckingBalance() not found, acctId=%ld\n",acctId);
+			exit(-1);
+		}
+		else if(flag==-3)
+		{
+			//AbortTransactionbak();
+			return -1;
+		}
+	}
+
+	//random read control
+	for(i=0;i<random_read_limit;i++)
+	{
+		acctId=acctArr[i];
+		nodeid1=nodeArr[i];
+		//GetAccount
+		acctName=Data_Read(Accounts_ID, acctId, nodeid1, &flag);
+		if(flag==0)
+		{
+			printf("GetAccount() not found, acctId=%ld\n",acctId);
+			exit(-1);
+		}
+		else if(flag==-3)
+		{
+			//AbortTransactionbak();
+			return -1;
+		}
+
+		//UpdateCheckingBalance
+		checkingBal=Data_Read(Checking_ID, acctId, nodeid1,  &flag);
+		if(flag==0)
+		{
+			printf("UpdateCheckingBalance() not found, acctId=%ld\n",acctId);
+			exit(-1);
+		}
+		else if(flag==-3)
+		{
+			//AbortTransactionbak();
+			return -1;
+		}
+	}
+	return 0;
+}
+
+void randomReadGen(TupleId* acctArr, int* nodeArr, int* node_id, int node_num)
+{
+	int i;
+	for(i=0;i<random_read_limit*2;i++)
+	{
+		acctArr[i]=RandomNumber(1, configNumAccounts);
+		nodeArr[i]=node_id[RandomNumber(1,node_num)-1];
+	}
+}
 

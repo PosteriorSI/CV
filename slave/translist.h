@@ -22,8 +22,8 @@ typedef struct WriteTransListNode {
 	int index;
 } WriteTransListNode;
 
-extern TransactionId* ReadTransTable[TABLENUM][READLISTMAX];
-extern TransactionId* WriteTransTable[TABLENUM];
+extern TransactionId*** ReadTransTable;
+extern TransactionId** WriteTransTable;
 
 //newtest
 extern void WriteListReset(int tableid, int h, TransactionId tid);

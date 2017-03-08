@@ -18,14 +18,15 @@
 #include "trans_conflict.h"
 #include "thread_global.h"
 
+int TABLENUM = 3;
 /* initialize the record hash table and the record lock table, latch table. */
-pthread_rwlock_t* RecordLock[TABLENUM];
-pthread_spinlock_t* RecordLatch[TABLENUM];
-Record* TableList[TABLENUM];
+pthread_rwlock_t** RecordLock;
+pthread_spinlock_t** RecordLatch;
+Record** TableList;
 
-int BucketNum[TABLENUM];
-int BucketSize[TABLENUM];
-uint64_t RecordNum[TABLENUM];
+int* BucketNum;
+int* BucketSize;
+uint64_t* RecordNum;
 
 int Prime[20000];
 int PrimeNum;
@@ -84,38 +85,53 @@ void InitBucketNum_Size(void)
 {
 	int bucketNums;
 
-	/*
-	// bucket num. 
-	BucketNum[Warehouse_ID]=1;
-    BucketNum[Item_ID]=1;
-    BucketNum[Stock_ID]=configWhseCount;
-    BucketNum[District_ID]=configWhseCount;
-    BucketNum[Customer_ID]=configWhseCount*configDistPerWhse;
-    BucketNum[History_ID]=configWhseCount*configDistPerWhse;
-    BucketNum[Order_ID]=configWhseCount*configDistPerWhse;
-    BucketNum[NewOrder_ID]=configWhseCount*configDistPerWhse;
-    BucketNum[OrderLine_ID]=configWhseCount*configDistPerWhse;
-    // bucket size.
-	BucketSize[Warehouse_ID]=configWhseCount;
-	BucketSize[Item_ID]=configUniqueItems;
-	BucketSize[Stock_ID]=configUniqueItems;
-	BucketSize[District_ID]=configDistPerWhse;
-	BucketSize[Customer_ID]=configCustPerDist;
-	BucketSize[History_ID]=configCustPerDist;
-	BucketSize[Order_ID]=OrderMaxNum;
-	BucketSize[NewOrder_ID]=OrderMaxNum;
-	BucketSize[OrderLine_ID]=OrderMaxNum*10;
-	*/
+	BucketNum=(int*)malloc(sizeof(int)*TABLENUM);
+	BucketSize=(int*)malloc(sizeof(int)*TABLENUM);
 
-	//smallbank
-	bucketNums=configNumAccounts/configAccountsPerBucket + (((configNumAccounts%configAccountsPerBucket)==0)?0:1);
-	BucketNum[Accounts_ID]=bucketNums;
-	BucketNum[Savings_ID]=bucketNums;
-	BucketNum[Checking_ID]=bucketNums;
+	switch(benchmarkType)
+	{
+	case TPCC:
+	{
+		// bucket num.
+		BucketNum[Warehouse_ID]=1;
+		BucketNum[Item_ID]=1;
+		BucketNum[Stock_ID]=configWhseCount;
+		BucketNum[District_ID]=configWhseCount;
+		BucketNum[Customer_ID]=configWhseCount*configDistPerWhse;
+		BucketNum[History_ID]=configWhseCount*configDistPerWhse;
+		BucketNum[Order_ID]=configWhseCount*configDistPerWhse;
+		BucketNum[NewOrder_ID]=configWhseCount*configDistPerWhse;
+		BucketNum[OrderLine_ID]=configWhseCount*configDistPerWhse;
 
-	BucketSize[Accounts_ID]=configAccountsPerBucket;
-	BucketSize[Savings_ID]=configAccountsPerBucket;
-	BucketSize[Checking_ID]=configAccountsPerBucket;
+		// bucket size.
+		BucketSize[Warehouse_ID]=configWhseCount;
+		BucketSize[Item_ID]=configUniqueItems;
+		BucketSize[Stock_ID]=configUniqueItems;
+		BucketSize[District_ID]=configDistPerWhse;
+		BucketSize[Customer_ID]=configCustPerDist;
+		BucketSize[History_ID]=configCustPerDist;
+		BucketSize[Order_ID]=OrderMaxNum;
+		BucketSize[NewOrder_ID]=OrderMaxNum;
+		BucketSize[OrderLine_ID]=OrderMaxNum*10;
+		break;
+	}
+
+	case SMALLBANK:
+	{
+		bucketNums=configNumAccounts/configAccountsPerBucket + (((configNumAccounts%configAccountsPerBucket)==0)?0:1);
+		BucketNum[Accounts_ID]=bucketNums;
+		BucketNum[Savings_ID]=bucketNums;
+		BucketNum[Checking_ID]=bucketNums;
+
+		BucketSize[Accounts_ID]=configAccountsPerBucket;
+		BucketSize[Savings_ID]=configAccountsPerBucket;
+		BucketSize[Checking_ID]=configAccountsPerBucket;
+		break;
+	}
+
+	default:
+		printf("benchmark not specified\n");
+	}
 
 	/* adapt the bucket-size to prime. */
 	ReadPrimeTable();
@@ -126,13 +142,20 @@ void InitRecordNum(void)
 {
 	int i;
 
+	RecordNum=(uint64_t*)malloc(sizeof(uint64_t)*TABLENUM);
+
 	for(i=0;i<TABLENUM;i++)
+	{
 		RecordNum[i]=BucketNum[i]*BucketSize[i];
+		//printf("RecordNum[%d]=%d\n", i, RecordNum[i]);
+	}
 }
 
 void InitRecordMem(void)
 {
 	int i;
+
+	TableList=(Record**)malloc(sizeof(Record*)*TABLENUM);
 
 	for(i=0;i<TABLENUM;i++)
 	{
@@ -148,6 +171,9 @@ void InitRecordMem(void)
 void InitLatchMem(void)
 {
 	int i;
+
+	RecordLock=(pthread_rwlock_t**)malloc(sizeof(pthread_rwlock_t*)*TABLENUM);
+	RecordLatch=(pthread_spinlock_t**)malloc(sizeof(pthread_spinlock_t*)*TABLENUM);
 
 	for(i=0;i<TABLENUM;i++)
 	{
@@ -168,9 +194,15 @@ void InitRecord(void)
 
    InitRecordNum();
 
+   //printf("InitRecordNum finish\n");
+
    InitRecordMem();
 
+   //printf("InitRecordMem finish\n");
+
    InitLatchMem();
+
+   //printf("InitLatchMem finish\n");
 
    int i;
    uint64_t j;
@@ -465,17 +497,26 @@ int RecordFind(int table_id, TupleId r)
 
    int bucket_size=BucketSize[table_id];
 
-   switch(table_id)
+   switch(benchmarkType)
    {
-
-    case Accounts_ID:
-	case Savings_ID:
-	case Checking_ID:
-		bucket_id=(r-1)/configAccountsPerBucket;
-		break;
-	default:
-		printf("table_ID error %d\n", table_id);
-   		/*
+   case SMALLBANK:
+   {
+	   switch(table_id)
+	   {
+		case Accounts_ID:
+		case Savings_ID:
+		case Checking_ID:
+			bucket_id=(r-1)/configAccountsPerBucket;
+			break;
+		default:
+			printf("table_ID error %d\n", table_id);
+	   }
+   }
+   break;
+   case TPCC:
+   {
+	   switch(table_id)
+	   {
    	   case Order_ID:
    	   case NewOrder_ID:
    	   case OrderLine_ID:
@@ -505,7 +546,11 @@ int RecordFind(int table_id, TupleId r)
    		   break;
    	   default:
    		   printf("table_ID error %d\n", table_id);
-   		   */
+	   }
+   }
+   break;
+   default:
+	   printf("benchmark undefined\n");
    }
 
    min=bucket_size*bucket_id;
@@ -649,18 +694,27 @@ int RecordFindHole(int table_id, TupleId r, int *flag)
 
     assert(TableList != NULL);
     THash HashTable = TableList[table_id];   //HashTable is a pointer to a particular table refer to.
-    switch(table_id)
+
+    switch(benchmarkType)
     {
-
-	case Accounts_ID:
-	case Savings_ID:
-	case Checking_ID:
-		bucket_id=(r-1)/configAccountsPerBucket;
-		break;
-	default:
-		printf("table_ID error %d\n", table_id);
-
-    	/*
+    case SMALLBANK:
+    {
+		switch(table_id)
+		{
+		case Accounts_ID:
+		case Savings_ID:
+		case Checking_ID:
+			bucket_id=(r-1)/configAccountsPerBucket;
+			break;
+		default:
+			printf("table_ID error %d\n", table_id);
+		}
+    }
+    break;
+    case TPCC:
+    {
+    	switch(table_id)
+    	{
     	case Order_ID:
     	case NewOrder_ID:
     	case OrderLine_ID:
@@ -690,7 +744,11 @@ int RecordFindHole(int table_id, TupleId r, int *flag)
     		break;
     	default:
     		printf("table_ID error %d\n", table_id);
-    		*/
+    	}
+    }
+    break;
+    default:
+    	printf("benchmark undefined\n");
     }
 
 	min=bucket_size*bucket_id;

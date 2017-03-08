@@ -52,6 +52,7 @@ int main(int argc, char *argv[])
 			exit(-1);
 		}
 
+
     	InitStorage();
 
     	printf("storage process finished.\n");

@@ -7,7 +7,7 @@
 #define RECORDNUM 100000
 //#define TABLENUM  9
 
-#define TABLENUM  3
+//#define TABLENUM  3
 
 #define VERSIONMAX 20
 
@@ -37,19 +37,21 @@ typedef Record * THash;
 
 typedef int VersionId;
 
+extern int TABLENUM;
+
 /* the lock in the tuple is used to verify the atomic operation of transaction */
-extern pthread_rwlock_t* RecordLock[TABLENUM];
+extern pthread_rwlock_t** RecordLock;
 
 /* just use to verify the atomic operation of a short-time */
-extern pthread_spinlock_t* RecordLatch[TABLENUM];
+extern pthread_spinlock_t** RecordLatch;
 
 /* every table will have a separated HashTable */
-extern Record* TableList[TABLENUM];
+extern Record** TableList;
 
-extern int BucketNum[TABLENUM];
-extern int BucketSize[TABLENUM];
+extern int* BucketNum;
+extern int* BucketSize;
 
-extern uint64_t RecordNum[TABLENUM];
+extern uint64_t* RecordNum;
 
 extern void InitRecord(void);
 

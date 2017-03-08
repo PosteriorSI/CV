@@ -2,7 +2,7 @@ masterip: 127.0.0.1
 paramport: 8000
 messageport: 8001
 recordport: 8002
-nodenum: 1
+nodenum: 2
 threadnum: 4
 clientport: 10050
 oneweight: 80

@@ -16,9 +16,9 @@
 #include "socket.h"
 #include "mem.h"
 
-TransactionId* ReadTransTable[TABLENUM][READLISTMAX];
+TransactionId*** ReadTransTable;
 
-TransactionId* WriteTransTable[TABLENUM];
+TransactionId** WriteTransTable;
 
 static void InitTransactionListMem();
 
@@ -82,6 +82,7 @@ void InitTransactionList(void)
    int i, j, k;
 
    InitTransactionListMem();
+   //printf("InitTransactionListMem finish\n");
    for (i = 0; i < TABLENUM; i++)
    {
       for (j = 0; j < RecordNum[i]; j++)
@@ -92,7 +93,7 @@ void InitTransactionList(void)
 
    for (i = 0; i < TABLENUM; i++)
    {
-      for (j = 0; j < READLISTMAX; j++)
+      for (j = 0; j < NODENUM*THREADNUM+1; j++)
       {
          for(k = 0; k < RecordNum[i]; k++)
          {
@@ -157,6 +158,23 @@ void InitTransactionListMem()
 {
 	int i, j;
 
+	ReadTransTable = (TransactionId***) malloc (TABLENUM*sizeof(TransactionId**));
+	if (ReadTransTable == NULL)
+	{
+		printf("malloc error for Read TransTable\n");
+		exit(-1);
+	}
+	for (i = 0; i < TABLENUM; i++)
+	{
+		ReadTransTable[i] = (TransactionId**) malloc ((NODENUM*THREADNUM+1)*sizeof(TransactionId*));
+		if (ReadTransTable[i] == NULL)
+		{
+			printf("malloc error for Read TransTable\n");
+			exit(-1);
+		}
+	}
+
+	WriteTransTable=(TransactionId**) malloc (TABLENUM*sizeof(TransactionId*));
 	for(i=0;i<TABLENUM;i++)
 	{
 		WriteTransTable[i]=(TransactionId*)malloc(sizeof(TransactionId)*RecordNum[i]);
@@ -165,7 +183,7 @@ void InitTransactionListMem()
 			printf("malloc error for Write TransTable. %d\n",i);
 			exit(-1);
 		}
-		for(j=0;j<READLISTMAX;j++)
+		for(j=0;j<NODENUM*THREADNUM+1;j++)
 		{
 			ReadTransTable[i][j]=(TransactionId*)malloc(sizeof(TransactionId)*RecordNum[i]);
 			if(ReadTransTable[i][j]==NULL)

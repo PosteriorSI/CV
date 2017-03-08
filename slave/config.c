@@ -7,6 +7,10 @@
 
 #include "config.h"
 #include "transactions.h"
+#include "data.h"
+
+#define TPCC_TABLENUM  9
+#define SMALLBANK_TABLENUM 3
 
 int configWhseCount;
 
@@ -51,9 +55,21 @@ int FREQUENCY_WRITE_CHECK;
 int MIN_BALANCE;
 int MAX_BALANCE;
 
+//hotspot control
+int HOTSPOT_PERCENTAGE;
+int HOTSPOT_FIXED_SIZE;
+
+//duration control
+int extension_limit;
+
+//random read control
+int random_read_limit;
 
 void InitConfig(void)
 {
+   benchmarkType=TPCC;
+   TABLENUM=TPCC_TABLENUM;
+
    transactionsPerTerminal=20000;
    paymentWeightValue=43;
    orderStatusWeightValue=0;
@@ -61,11 +77,11 @@ void InitConfig(void)
    stockLevelWeightValue=4;
    limPerMin_Terminal=0;
 
-   configWhseCount=5;
+   configWhseCount=1;
    configDistPerWhse=10;
-   configCustPerDist=3000;
+   configCustPerDist=300;
    MaxBucketSize=1000000;
-   configUniqueItems=100000;
+   configUniqueItems=1000;
 
    configCommitCount=60;
 
@@ -89,4 +105,14 @@ void InitConfig(void)
 
    MIN_BALANCE=10000;
    MAX_BALANCE=50000;
+
+   //hotspot control
+   HOTSPOT_PERCENTAGE=25;
+   HOTSPOT_FIXED_SIZE=100;
+
+   //duration control
+   extension_limit=2;
+
+   //random read control
+   random_read_limit=0;
 }
