@@ -15,18 +15,18 @@
 
 typedef enum
 {
-	empty,
-	active,
-	prepared,
-	committed,
-	aborted
+    empty,
+    active,
+    prepared,
+    committed,
+    aborted
 }State;
 
 struct TransIdMgr
 {
-	TransactionId curid;
-	TransactionId maxid;
-	pthread_mutex_t IdLock;
+    TransactionId curid;
+    TransactionId maxid;
+    pthread_mutex_t IdLock;
 };
 
 
@@ -35,18 +35,18 @@ typedef struct TransIdMgr IDMGR;
 struct TransactionData
 {
     //CV
-	TransactionId tid;
+    TransactionId tid;
 
-	StartId	sid_min;
-	StartId sid_max;
+    StartId    sid_min;
+    StartId sid_max;
 
-	CommitId cid_min;
+    CommitId cid_min;
 
-	State state;
+    State state;
 
-	int trans_index;
+    int trans_index;
 
-	TransactionId* InvisibleArray;
+    TransactionId* InvisibleArray;
 };
 
 extern TransactionId thread_0_tid;

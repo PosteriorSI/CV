@@ -16,20 +16,20 @@
 
 /* Version is used for store a version of a record */
 typedef struct {
-	TransactionId tid;
-	CommitId cid;
-	/* to stock other information of each version. */
-	TupleId value;
-	bool deleted;
+    TransactionId tid;
+    CommitId cid;
+    /* to stock other information of each version. */
+    TupleId value;
+    bool deleted;
 } Version;
 
 /* Record is a multi-version tuple structure */
 typedef struct {
-	TupleId tupleid;
-	int rear;
-	int front;
-	int lcommit;
-	Version VersionList[VERSIONMAX];
+    TupleId tupleid;
+    int rear;
+    int front;
+    int lcommit;
+    Version VersionList[VERSIONMAX];
 } Record;
 
 /* THash is pointer to a hash table for every table */
