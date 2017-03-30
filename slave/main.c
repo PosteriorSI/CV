@@ -14,13 +14,12 @@
 #include"data_am.h"
 #include"config.h"
 #include"socket.h"
-#include "shmem.h"
+#include"shmem.h"
 
 int main(int argc, char *argv[])
 {
     pid_t pid;
     int i,j;
-    int commNum[20]={0};
     if (argc != 2)
     {
         printf("please enter the configure file's name\n");
@@ -43,29 +42,10 @@ int main(int argc, char *argv[])
 
     else if(pid == 0)
     {
-        /* shmget the shared memory address*/
-        //BindShmem();
-
-        if(freopen("service_log.txt", "w", stdout)==NULL)
-        {
-            printf("redirection stdout error\n");
-            exit(-1);
-        }
-
 
         InitStorage();
 
-        printf("storage process finished.\n");
-        
-        for(i=1;i<NODENUM*THREADNUM+1;i++)
-        {
-            for(j=0;j<12;j++)
-                commNum[j]+=CommTimes[i][j];
-        }
-
-        printf("count for communications times:\n");
-        for(i=0;i<12;i++)
-            printf("%4d : %d times\n", i, commNum[i]);
+        printf("storage process finished.\n");   
 /*
         for(i=0;i<9;i++)
         {

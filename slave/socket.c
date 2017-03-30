@@ -11,13 +11,22 @@
 #include "socket.h"
 #include "trans.h"
 #include "data_am.h"
-
-uint32_t** CommTimes;
+#include "config.h"
 
 int oneNodeWeight;
 int twoNodeWeight;
 
 int redo_limit;
+
+// hotspot control
+int HOTSPOT_PERCENTAGE;
+int HOTSPOT_FIXED_SIZE;
+
+// duration control
+int extension_limit;
+
+// random read control
+int random_read_limit;
 
 /* send buffer and receive buffer for client */
 uint64_t ** send_buffer;
@@ -56,23 +65,6 @@ char local_ip[20];
 
 pthread_t * server_tid;
 
-void InitCommTimes(void)
-{
-    int size;
-    int i,j;
-    int num=20;
-
-    size=sizeof(uint32_t*)*(NODENUM*THREADNUM+1);
-    CommTimes=(uint32_t**)malloc(size);
-
-    size=sizeof(uint32_t)*num;
-    for(i=0;i<NODENUM*THREADNUM+1;i++)
-    {
-        CommTimes[i]=(uint32_t*)malloc(size);
-        memset(CommTimes[i], (uint32_t)0, size);
-    }
-}
-
 
 // read the configure parameters from the configure file.
 int ReadConfig(char * find_string, char * result)
@@ -80,7 +72,7 @@ int ReadConfig(char * find_string, char * result)
    int i;
    int j;
    int k;
-   char buffer[30];
+   char buffer[50];
    char * p;
 
    for (i = 0; i < LINEMAX; i++)
@@ -426,7 +418,7 @@ void GetParam(void)
    int i;
 
    int param_send_buffer[1]; 
-   int param_recv_buffer[9+NODENUMMAX]; 
+   int param_recv_buffer[31+NODENUMMAX]; 
 
    // register local IP to master node && get by other nodes in the system 
    in_addr_t help = inet_addr(local_ip); 
@@ -454,10 +446,54 @@ void GetParam(void)
    twoNodeWeight = param_recv_buffer[7];
    redo_limit = param_recv_buffer[8];
 
+       // hotspot control
+    HOTSPOT_PERCENTAGE = param_recv_buffer[9];
+    HOTSPOT_FIXED_SIZE = param_recv_buffer[10];
+
+    // duration control
+    extension_limit = param_recv_buffer[11];
+       
+    // random read control
+    random_read_limit = param_recv_buffer[12];
+
+    benchmarkType = (BENCHMARK)param_recv_buffer[13];
+
+    if (benchmarkType == TPCC)
+    {
+        TABLENUM = TPCC_TABLENUM;
+    }
+    else if (benchmarkType == SMALLBANK)
+    {
+        TABLENUM = SMALLBANK_TABLENUM;
+    }
+    else
+    {
+        printf("read benchmark type error!\n");
+        exit(-1);
+    }
+    
+    transactionsPerTerminal = param_recv_buffer[14];
+    paymentWeightValue = param_recv_buffer[15];
+    orderStatusWeightValue = param_recv_buffer[16];
+    deliveryWeightValue = param_recv_buffer[17];
+    stockLevelWeightValue = param_recv_buffer[18];
+    limPerMin_Terminal = param_recv_buffer[19];
+    configWhseCount = param_recv_buffer[20];
+    configCommitCount = param_recv_buffer[21];
+    OrderMaxNum = param_recv_buffer[22];
+    MaxDataLockNum = param_recv_buffer[23];
+    scaleFactor = param_recv_buffer[24] * 0.01;
+    FREQUENCY_AMALGAMATE = param_recv_buffer[25];
+    FREQUENCY_BALANCE = param_recv_buffer[26];
+    FREQUENCY_DEPOSIT_CHECKING = param_recv_buffer[27];
+    FREQUENCY_SEND_PAYMENT = param_recv_buffer[28];
+    FREQUENCY_TRANSACT_SAVINGS = param_recv_buffer[29];
+    FREQUENCY_WRITE_CHECK = param_recv_buffer[30];
+
    for (i = 0; i < nodenum; i++)
    {
       struct in_addr help; 
-      help.s_addr = param_recv_buffer[9+i]; 
+      help.s_addr = param_recv_buffer[31+i]; 
       char * result = inet_ntoa(help);
       int k;
       for (k = 0; result[k] != '\0'; k++)
